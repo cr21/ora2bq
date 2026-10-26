@@ -7,6 +7,7 @@ bare names resolve to the default project and dataset below.
 
 Usage:
     python tools/bq_utils.py exists returns orders sp_log_etl_run
+    python tools/bq_utils.py find orders customers          # search every dataset in the project
     python tools/bq_utils.py schema returns
     python tools/bq_utils.py apply bq/ddl/returns.sql [--dry-run]
     python tools/bq_utils.py routine-exists sp_process_returns
@@ -56,6 +57,30 @@ def cmd_exists(client, args):
         kind, _ = lookup(client, full)
         result[full] = {"exists": kind is not None, "type": kind}
         missing |= kind is None
+    print(json.dumps(result, indent=2))
+    return 1 if missing else 0
+
+
+def cmd_find(client, args):
+    """Search every dataset in the project; exit 1 if any name is missing from the target dataset."""
+    index = {}
+    for ds in client.list_datasets(args.project):
+        for t in client.list_tables(ds.reference):
+            index.setdefault(t.table_id.lower(), []).append({"dataset": ds.dataset_id, "type": t.table_type})
+        for r in client.list_routines(ds.reference):
+            index.setdefault(r.routine_id.lower(), []).append({"dataset": ds.dataset_id, "type": r.type_})
+
+    result, missing = {}, False
+    for name in args.names:
+        name = name.strip("`").split(".")[-1].lower()
+        hits = index.get(name, [])
+        target = next((h for h in hits if h["dataset"] == args.dataset), None)
+        result[name] = {
+            "in_target": target is not None,
+            "type": target["type"] if target else None,
+            "other_datasets": [h for h in hits if h["dataset"] != args.dataset],
+        }
+        missing |= target is None
     print(json.dumps(result, indent=2))
     return 1 if missing else 0
 
@@ -125,6 +150,10 @@ def main():
     p = sub.add_parser("exists", help="check whether tables/views/routines exist")
     p.add_argument("names", nargs="+")
     p.set_defaults(func=cmd_exists)
+
+    p = sub.add_parser("find", help="search all datasets in the project for tables/views/routines")
+    p.add_argument("names", nargs="+")
+    p.set_defaults(func=cmd_find)
 
     p = sub.add_parser("routine-exists", help="check that a procedure/function is deployed")
     p.add_argument("name")

@@ -68,11 +68,14 @@ Read the Oracle source and list every referenced object, grouped by kind:
 - sequences (`<seq>.NEXTVAL`), `%TYPE` / `%ROWTYPE` anchors
 - other procedures/functions it calls (for example `sp_log_etl_run`)
 
-Cross-check against Oracle so nothing is missed:
+Verify the list against Oracle's data dictionary:
 ```bash
 .venv/bin/python tools/oracle_utils.py deps <PROC>      # ALL_DEPENDENCIES for the procedure
 ```
-Show the user the final dependency list before creating anything.
+The dependency list is the union of what you read in the source and what `deps` returns.
+If the two disagree, use Oracle (`oracle_utils.py columns` / `ddl`) to confirm each object
+is real. Ignore local variables, cursors, and record types, which aren't schema objects.
+**Don't ask the user to confirm the list.** Print it for visibility and continue.
 
 **Called procedures/functions are dependencies too.** If the procedure calls another
 routine from `procedures/` that is not yet in BigQuery, convert that routine first
@@ -80,12 +83,25 @@ routine from `procedures/` that is not yet in BigQuery, convert that routine fir
 
 ### 1b. Check what already exists in BigQuery
 
+Search **every dataset in the project**:
 ```bash
-.venv/bin/python tools/bq_utils.py exists <obj1> <obj2> ...
+.venv/bin/python tools/bq_utils.py find <obj1> <obj2> ...
 ```
-For objects that already exist, compare their columns with the Oracle columns. If they
-differ, report the difference to the user and ask before changing anything. Never drop
-or replace an existing table that contains data without explicit approval.
+For each object, `find` reports whether it is in `orc_dataset` (`in_target`) and which other
+datasets also have it (`other_datasets`). Act without asking:
+
+| Result | Action |
+|---|---|
+| In `orc_dataset` | Check its columns (next paragraph). Otherwise reuse it and create nothing. |
+| Not in `orc_dataset`, but in another dataset | Treat it as **missing** and create it in `orc_dataset` from the Oracle DDL (1c-1d). Never reference or copy the other dataset. List the other location in the PR description. |
+| Not found anywhere | Missing: create it in `orc_dataset` (1c-1d). |
+
+**Column check for objects that already exist in `orc_dataset`:** compare
+`tools/bq_utils.py schema <obj>` with `tools/oracle_utils.py columns <OBJ>`. A mismatch is a
+column that's missing from BigQuery, or a type that doesn't match the mapping rules in 1d.
+Extra columns in BigQuery are fine. If there's any mismatch, **stop and ask the user** how to
+handle it. Show a table of each column with its Oracle type and BigQuery type, and change
+nothing until they answer. Never drop, replace, or alter an existing table on your own.
 
 ### 1c. Fetch Oracle metadata for the missing objects
 
@@ -110,7 +126,7 @@ Create the objects in dependency order (tables before the views on them):
 .venv/bin/python tools/bq_utils.py apply bq/ddl/<object>.sql
 ```
 
-**Success check:** `tools/bq_utils.py exists` reports every dependency as present.
+**Success check:** `tools/bq_utils.py find <all dependencies>` exits 0, meaning every dependency is in `orc_dataset`.
 
 ---
 
