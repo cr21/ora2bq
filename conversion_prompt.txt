@@ -1,0 +1,193 @@
+### You are a BigQuery SQL and scripting expert.
+
+### Task:
+
+* Rewrite to a complete BigQuery SQL script with correct syntax.
+* Do **not** leave placeholders for manual rewrite. Provide the **full, runnable** BigQuery script.
+* Avoid comment clutter; keep comments **brief and necessary** only.
+
+### Output scope (must follow)
+
+* This pipeline migrates **stored procedure logic** for deployment. **Target tables already exist** (created from separate schema definitions).
+* Return **only** the `CREATE OR REPLACE PROCEDURE` (or `CREATE PROCEDURE`) for the routine being migrated—**one procedure body**, fully qualified.
+* **Do not** emit `CREATE TABLE`, `CREATE OR REPLACE TABLE`, `CREATE VIEW`, `CREATE INDEX`, or other object DDL. Do not recreate schemas the procedure reads/writes.
+* If the source includes only DDL and no procedure, convert only what is asked; otherwise **omit DDL entirely**.
+* Optional: if the source defines **required** helper UDFs that the procedure calls, include those `CREATE FUNCTION` statements **above** the procedure; still **never** emit table DDL.
+* Use standard SQL; prefer fully-qualified names as
+  `project-5c016d48-80d5-4534-b69.orc_dataset.object`.
+
+---
+
+### Conversion Rules:
+
+#### 1. Data Type Mapping:
+
+* VARCHAR2, NVARCHAR2, CHAR, CLOB → STRING
+* NUMBER(p,s) → NUMERIC(p,s) or BIGNUMERIC(p,s). Choose BIGNUMERIC if higher precision is needed.
+* NUMBER, INTEGER → INT64
+* FLOAT, BINARY_FLOAT, BINARY_DOUBLE → FLOAT64
+* DATE → DATE
+* TIMESTAMP → TIMESTAMP
+* RAW, BLOB → BYTES
+
+---
+
+#### 2. Function and Operator Conversion:
+
+* SYSDATE / CURRENT_TIMESTAMP → CURRENT_TIMESTAMP()
+* NVL(expr1, expr2) → IFNULL(expr1, expr2)
+* DECODE(val, if1, then1, if2, then2, ...) →
+  CASE val WHEN if1 THEN then1 WHEN if2 THEN then2 ... END
+* ADD_MONTHS(date, months) → DATE_ADD(date, INTERVAL months MONTH)
+* TRUNC(date) → DATE_TRUNC(date, DAY)
+* ROWNUM → ROW_NUMBER() OVER()
+  *(ensure an ORDER BY clause is present or added if context implies ordering)*
+* Outer join operator (+) → LEFT JOIN or RIGHT JOIN
+
+---
+
+#### 3. DDL (Tables & Views):
+
+* **Procedure migrations:** skip DDL output entirely (see Output scope). Assume tables match `psql_tables_schema` / live BigQuery.
+* **DDL-only sources:** remove Postgres-specific physical storage clauses like TABLESPACE, STORAGE, LOGGING, PCTFREE, etc.
+* Comment out or remove unsupported constraints like PRIMARY KEY, FOREIGN KEY, and CHECK. Add a comment indicating original constraint.
+* Convert CREATE INDEX statements into comments (BigQuery manages indexing automatically).
+* For **standalone** CREATE TABLE conversions only: suggest PARTITION BY / CLUSTER BY as appropriate.
+
+---
+
+#### 4. PL/SQL (Procedures, Functions, Packages):
+
+* Translate PL/SQL procedural logic into BigQuery procedural language.
+* Convert variable declarations, cursors, loops (FOR, WHILE), and conditional logic (IF/ELSEIF/ELSE).
+* Rewrite Postgres exception blocks using BigQuery BEGIN...EXCEPTION syntax. Single Exception block only in bigquery.
+* Deconstruct Postgres packages into individual CREATE PROCEDURE and CREATE FUNCTION statements.
+* Remove unsupported features like autonomous transactions, PRAGMA directives, BULK COLLECT (add notes indicating removal).
+* Replace Postgres sequences with BigQuery sequences or GENERATE_UUID() for unique identifiers.
+
+**Row count after DML (critical):**
+
+* PostgreSQL `GET DIAGNOSTICS variable_name = ROW_COUNT;` → BigQuery: place `SET variable_name = @@row_count;` **immediately after** the INSERT/UPDATE/DELETE/MERGE that it refers to (same script block).
+example : 
+  postgres sql  :  
+    `GET DIAGNOSTICS v_kpi_records = ROW_COUNT; `
+  corosponding bigquery sql : 
+     `SET v_kpi_records = @@row_count`;
+
+---
+
+#### 5. DML (Data Manipulation):
+
+* Ensure INSERT statements conform to BigQuery syntax:
+
+  * INSERT INTO ... VALUES
+  * INSERT INTO ... SELECT
+* Rewrite MERGE statements to match BigQuery syntax and capabilities.
+
+---
+
+### Code Commenting Rules:
+
+* **No explanatory comments** (e.g., “-- declare a variable”). Code should be self-documenting.
+* **Essential notes only**:
+
+  * Flag critical conversion changes
+  * Explain non-obvious implementation decisions
+  * Document original functionality requiring manual review
+* Prefix such comments with: `NOTE:`
+
+---
+
+### Environment Defaults:
+
+* Default BigQuery project: `project-5c016d48-80d5-4534-b69`
+* Default BigQuery dataset: ``
+
+---
+
+### BigQuery Skeletons for Reference:
+
+#### 1. Scalar UDF:
+
+```sql
+CREATE OR REPLACE FUNCTION `project-5c016d48-80d5-4534-b69.orc_dataset.func_name`(param_name param_type, ...)
+RETURNS return_type AS (
+  /* scalar SQL expression */
+);
+```
+
+#### 2. Table-Valued UDF:
+
+```sql
+CREATE OR REPLACE FUNCTION `project-5c016d48-80d5-4534-b69.orc_dataset.func_name`(param_name param_type, ...)
+RETURNS TABLE<col_name col_type, ...> AS (
+  /* SQL query returning a table */
+);
+```
+
+#### 3. Procedure:
+
+```sql
+CREATE OR REPLACE PROCEDURE `project-5c016d48-80d5-4534-b69.orc_dataset.proc_name`(
+  IN param_name param_type,
+  OUT out_param out_type
+)
+BEGIN
+  /* DECLARE variables */
+  /* BigQuery script body */
+  /* Use SELECT to set OUT parameters */
+END;
+```
+
+3. Procedure:
+CREATE OR REPLACE PROCEDURE `project-5c016d48-80d5-4534-b69.orc_dataset.proc_name`(IN param_name param_type, OUT out_param out_type, ...)
+BEGIN
+  /* DECLARE variables */
+  /* BigQuery script body */
+  /* Use SELECT ... to set OUT parameters */
+END;
+
+4. View:
+CREATE OR REPLACE VIEW `project-5c016d48-80d5-4534-b69.orc_dataset.view_name`
+AS
+  /* SQL query */
+;
+
+5. Table:
+CREATE OR REPLACE TABLE `project-5c016d48-80d5-4534-b69.orc_dataset.table_name` (
+  column_name data_type OPTIONS(description="..."),
+  ...
+)
+OPTIONS(
+  description="...",
+  partition_by=DATE_TRUNC(column, MONTH),
+  cluster_by=column1, column2
+);
+
+6. Sequence:
+CREATE SEQUENCE `project-5c016d48-80d5-4534-b69.orc_dataset.sequence_name`
+OPTIONS(
+  sequence_start=1,
+  sequence_increment=1,
+  sequence_max_value=999999999
+);
+
+Object-Specific Rules:
+- UDFs: No BEGIN...END; body must be a single SQL expression in AS (...). No OUT/IN OUT params.
+- Procedures: Use BEGIN...END; DECLARE variables; RETURN not allowed (use OUT params or SELECT).
+- Views: No WITH CHECK OPTION.
+- Tables: Remove PRIMARY KEY/FOREIGN KEY constraints (not enforced in BigQuery). Add partitioning/clustering.
+- Sequences: Replace Postgres sequence usage with BigQuery sequence or GENERATE_UUID().
+
+DATA TYPE RULES in UPDATE/MERGE/INSERT
+- use schema files for your guide to avoid any error related type
+e.g "Query column <col_num> has type <src_type> which cannot be inserted into column <column name>, which has type <trg_type> at [pos:char]"
+- whenever insert into select * make sure schema files are used to avoid any data type mismatch between source table and target table
+
+BigQuery does NOT allow CTE (WITH) before UPDATE in scripting like Postgres does
+
+Instead, it requires:
+UPDATE ... SET ... FROM (subquery) AS src
+
+- don't write incomplete conversion file, complete fully.
+Now rewrite the following SQL to a complete, valid BigQuery definition. **For stored procedures, output only the procedure (no CREATE TABLE).** Keep business logic, and add brief comments where manual follow-up is needed.
