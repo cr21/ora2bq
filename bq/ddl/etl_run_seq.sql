@@ -1,0 +1,5 @@
+-- NOTE: Oracle sequence RETAIL.ETL_RUN_SEQ (START WITH 1012, INCREMENT BY 1) has no BigQuery equivalent.
+-- NOTE: Replaced in procedures by MAX(run_id)+1 over `project-5c016d48-80d5-4534-b69.orc_dataset.etl_run_log`
+--       (floor 1011 so numbering continues from Oracle). Not safe under concurrent runs of
+--       different procedures; switch to GENERATE_UUID() if run_id can become STRING.
+-- NOTE: Intentionally no DDL - this file is documentation only and is not applied.
